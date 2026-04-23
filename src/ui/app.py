@@ -15,6 +15,49 @@ st.title('🧬 AI Research Partner')
 
 # Get or create a session ID for this user
 session_id = get_or_create_session_id()
+# Add to src/ui/app.py — SIDEBAR PROFILE SECTION
+# (insert this after session_id = get_or_create_session_id())
+
+from src.agents.researcher_profile import save_profile, load_profile, build_system_prompt
+
+# Load profile from database
+if 'profile' not in st.session_state:
+    st.session_state.profile = load_profile(session_id)
+
+# Sidebar for profile setup
+with st.sidebar:
+    st.header('Your Research Profile')
+
+    name = st.text_input('Name', value=st.session_state.profile.get('name', ''))
+
+    level = st.selectbox('Academic Level',
+        ['phd_student', 'postdoc', 'professor', 'industry_researcher'],
+        index=0
+    )
+
+    domain = st.text_input('Research Domain',
+        value=st.session_state.profile.get('research_domain', ''),
+        placeholder='e.g., molecular biology, genomics'
+    )
+
+    project = st.text_area('Current Project (brief description)',
+        value=st.session_state.profile.get('current_project', ''),
+        height=100
+    )
+
+    if st.button('Save Profile'):
+        profile_data = {
+            'name': name, 'academic_level': level,
+            'research_domain': domain, 'current_project': project
+        }
+        save_profile(session_id, profile_data)
+        st.session_state.profile = profile_data
+        st.success('Profile saved!')
+
+# Build the system prompt from profile
+system_prompt = build_system_prompt(st.session_state.profile)
+
+# Now use system_prompt instead of the hardcoded string in your ask() call
 
 # Load conversation history from database (runs once on page load)
 if 'messages' not in st.session_state:
