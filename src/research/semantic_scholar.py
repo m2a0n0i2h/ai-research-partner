@@ -1,3 +1,9 @@
+
+import os
+headers={
+    'User-Agent': 'AIResearchPartner/1.0',
+    'x-api-key': os.getenv('SEMANTIC_SCHOLAR_API_KEY', '')
+}
 # src/research/semantic_scholar.py
 import requests
 import time
