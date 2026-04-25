@@ -1,9 +1,14 @@
+aiohappyeyeballs==2.6.1
+aiohttp==3.13.5
+aiosignal==1.4.0
 altair==6.1.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0
+arxiv==3.0.0
 attrs==26.1.0
 bcrypt==5.0.0
+biopython==1.87
 blinker==1.9.0
 build==1.4.4
 cachetools==6.2.6
@@ -16,8 +21,10 @@ cryptography==46.0.7
 deprecation==2.1.0
 distro==1.9.0
 durationpy==0.10
+feedparser==6.0.12
 filelock==3.29.0
 flatbuffers==25.12.19
+frozenlist==1.8.0
 fsspec==2026.3.0
 gitdb==4.0.12
 GitPython==3.1.47
@@ -95,6 +102,7 @@ scikit-learn==1.8.0
 scipy==1.17.1
 sentence-transformers==5.4.1
 setuptools==81.0.0
+sgmllib3k==1.0.0
 shellingham==1.5.4
 six==1.17.0
 smmap==5.0.3
