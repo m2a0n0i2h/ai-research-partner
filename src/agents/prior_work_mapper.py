@@ -52,7 +52,7 @@ def map_prior_work(research_question: str, ask_fn, domain: str = 'life science')
 
         # Stage 3: Extract claims from each paper individually
         print('Stage 3: Staged reading...')
-        extractions = extract_all_papers(all_papers, ask_fn, max_papers=8)
+        extractions = extract_all_papers(all_papers, ask_fn, max_papers=20)
 
         # Stage 4: Synthesise across extractions
         print('Stage 4: Synthesising...')
