@@ -1,6 +1,6 @@
 # src/memory/conversation_store.py
 import os
-from supabase import create_client
+import uuid
 
 try:
     import streamlit as st
@@ -12,25 +12,45 @@ except Exception:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
 
+from supabase import create_client
 supabase = create_client(url, key)
 
+
 def save_message(session_id: str, role: str, content: str):
-    """Save one message to the database"""
-    supabase.table('conversations').insert({
-        'session_id': session_id,
-        'role': role,
-        'content': content
-    }).execute()
+    '''Save one message to Supabase — fails silently so app never crashes'''
+    try:
+        supabase.table('conversations').insert({
+            'session_id': session_id,
+            'role': role,
+            'content': content
+        }).execute()
+    except Exception as e:
+        print(f'Supabase save failed (non-critical): {e}')
+
 
 def load_conversation(session_id: str) -> list:
-    """Load all messages for a session, oldest first"""
-    result = supabase.table('conversations') \
-        .select('role, content, created_at') \
-        .eq('session_id', session_id) \
-        .order('created_at') \
-        .execute()
-    return [{'role': r['role'], 'content': r['content']} for r in result.data]
+    '''Load all messages for a session — returns empty list on any failure'''
+    try:
+        result = supabase.table('conversations') \
+            .select('role, content, created_at') \
+            .eq('session_id', session_id) \
+            .order('created_at') \
+            .execute()
+        return [
+            {'role': r['role'], 'content': r['content']}
+            for r in result.data
+        ]
+    except Exception as e:
+        print(f'Supabase load failed (non-critical): {e}')
+        return []
+
 
 def get_or_create_session_id() -> str:
-    """Return a fixed session ID for now — will improve with auth later"""
-    return 'session_001'
+    '''
+    Generate a unique session ID per browser session.
+    Stored in st.session_state so it survives Streamlit reruns.
+    '''
+    import streamlit as st
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+    return st.session_state.session_id
