@@ -1,6 +1,7 @@
 # src/ui/app.py
-# Complete Phase 2 version
-# Fixes: hallucination prevention, literature routing, Chroma cloud fix
+# Complete Phase 2 version — all fixes included
+# Fixes: results persist across reruns, supabase silent fail,
+#        hallucination prevention, literature routing
 
 import sys
 import os
@@ -8,9 +9,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import streamlit as st
 from src.api.groq_client import ask
-from src.memory.conversation_store import save_message, load_conversation, get_or_create_session_id
+from src.memory.conversation_store import (
+    save_message, load_conversation, get_or_create_session_id
+)
 from src.memory.vector_store import add_memory, build_memory_context
-from src.agents.prior_work_mapper import map_prior_work
+
+try:
+    from src.agents.prior_work_mapper import map_prior_work
+    RESEARCH_AVAILABLE = True
+except ImportError as e:
+    RESEARCH_AVAILABLE = False
+    print(f'Prior Work Mapper not available: {e}')
 
 # ─────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -22,12 +31,22 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
+# INITIALISE SESSION STATE — must be done before anything else
+# ─────────────────────────────────────────────────────────────
+if 'research_results' not in st.session_state:
+    st.session_state.research_results = None
+if 'research_question_used' not in st.session_state:
+    st.session_state.research_question_used = ''
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# ─────────────────────────────────────────────────────────────
 # HELPER: DETECT LITERATURE SEARCH QUESTIONS
 # ─────────────────────────────────────────────────────────────
 def is_literature_question(text: str) -> bool:
     '''
     Detect if the user is asking for research papers or citations.
-    These MUST go to Prior Work Mapper — never answered from AI memory.
+    These must go to Prior Work Mapper — never answered from AI memory.
     '''
     signals = [
         'research on', 'papers on', 'articles on', 'studies on',
@@ -38,6 +57,7 @@ def is_literature_question(text: str) -> bool:
         'what research exists', 'cite', 'citation', 'reference', 'references',
         'who published', 'recent studies', 'recent papers', 'latest research',
         'give me a study', 'give me an article', 'give me a paper',
+        'research about', 'studies about', 'articles about',
     ]
     text_lower = text.lower()
     return any(signal in text_lower for signal in signals)
@@ -57,7 +77,8 @@ with st.sidebar:
 
     level = st.selectbox(
         'Academic Level',
-        ['PhD Student', 'Postdoc', 'Professor', 'Industry Researcher', 'Masters Student']
+        ['PhD Student', 'Postdoc', 'Professor',
+         'Industry Researcher', 'Masters Student']
     )
 
     domain = st.text_input(
@@ -67,15 +88,15 @@ with st.sidebar:
 
     project = st.text_area(
         'Current Project',
-        placeholder='Brief description of what you are working on right now...',
+        placeholder='Brief description of what you are working on...',
         height=100
     )
 
     st.divider()
-    st.caption('📌 For literature search — use the **Prior Work Mapper** tab.')
-    st.caption('💬 For concepts and discussion — use the **Chat** tab.')
+    st.caption('📌 For finding papers → use **Prior Work Mapper** tab')
+    st.caption('💬 For concepts and discussion → use **Chat** tab')
     st.divider()
-    st.caption('v0.2 — Phase 2 Active')
+    st.caption('v0.2 — Phase 2')
 
 
 # ─────────────────────────────────────────────────────────────
@@ -91,19 +112,21 @@ with tab_chat:
     st.header('Research Chat')
     st.caption('Discuss concepts, mechanisms, and ideas — memory persists across sessions')
 
-    # Warning banner
     st.info(
-        '⚠️ **Important:** This chat tab does NOT search databases. '
-        'For finding real research papers and citations, use the **🔬 Prior Work Mapper** tab. '
+        '⚠️ **This tab does not search databases.** '
+        'For finding real research papers and citations, '
+        'use the **🔬 Prior Work Mapper** tab. '
         'The chat AI will never generate paper citations to avoid hallucination.',
         icon='🔬'
     )
 
-    # Session and conversation
+    # Get stable session ID from session state
     session_id = get_or_create_session_id()
 
-    if 'messages' not in st.session_state:
+    # Load conversation history from Supabase only once per session
+    if 'conversation_loaded' not in st.session_state:
         st.session_state.messages = load_conversation(session_id)
+        st.session_state.conversation_loaded = True
 
     # Display conversation history
     for msg in st.session_state.messages:
@@ -113,6 +136,7 @@ with tab_chat:
     # Handle new user input
     if prompt := st.chat_input('Discuss a concept, mechanism, or research idea...'):
 
+        # Save to Supabase (silent fail)
         save_message(session_id, 'user', prompt)
         st.session_state.messages.append({'role': 'user', 'content': prompt})
 
@@ -121,17 +145,18 @@ with tab_chat:
 
         with st.chat_message('assistant'):
 
-            # ── ROUTE: literature question → redirect, do not hallucinate ──
+            # ── Literature question → redirect, do not hallucinate ──────
             if is_literature_question(prompt):
                 response = (
                     "⚠️ **Literature search detected.**\n\n"
                     "I cannot safely retrieve or cite research papers from memory. "
-                    "All language models — including me — can generate citations that "
-                    "sound real but do not exist. This is called hallucination, and it "
-                    "is especially dangerous in research contexts.\n\n"
-                    "**Please use the 🔬 Prior Work Mapper tab** to search PubMed and "
-                    "ArXiv for real, verified papers. Every result there links to an "
-                    "actual paper you can open and read.\n\n"
+                    "All language models — including me — can generate citations "
+                    "that sound real but do not exist. "
+                    "This is called hallucination and is especially dangerous "
+                    "in research contexts.\n\n"
+                    "**Please use the 🔬 Prior Work Mapper tab** to search "
+                    "PubMed and ArXiv for real, verified papers. "
+                    "Every result there links to an actual paper you can open.\n\n"
                     "I am happy to help you with:\n"
                     "- Discussing the mechanism or biology behind your topic\n"
                     "- Interpreting results you have already found\n"
@@ -141,31 +166,31 @@ with tab_chat:
                 )
                 st.markdown(response)
 
-            # ── ROUTE: concept/discussion question → answer with AI ──
+            # ── Concept/discussion question → answer with AI ────────────
             else:
                 with st.spinner('Thinking...'):
 
-                    # Get relevant memories from past sessions
                     memory_context = build_memory_context(prompt)
 
-                    # Build the system prompt
-                    system = f'''You are an expert AI research thinking partner for a {level} in {domain if domain else 'life science'}.
+                    system = f'''You are an expert AI research thinking partner for a {level} in {domain if domain else "life science"}.
 {"Current project: " + project if project else ""}
 
 CRITICAL RULES — NEVER VIOLATE THESE:
 
 1. NEVER generate, fabricate, or cite research papers.
    Do not write author names, journal names, years, or paper titles.
-   If you want to reference a concept, say "research in this area suggests..." without fabricating a citation.
+   If you want to reference a concept, say "research in this area suggests..."
+   without fabricating a citation.
 
-2. NEVER say "According to Smith et al." or any author-year citation.
+2. NEVER write anything like "According to Smith et al." or any author-year citation.
    You have not searched any database. You cannot safely cite papers.
    Direct the researcher to the Prior Work Mapper tab for any literature needs.
 
-3. You CAN discuss mechanisms, concepts, pathways, experimental approaches, and established science.
+3. You CAN discuss mechanisms, concepts, pathways, experimental approaches,
+   and established science at a deep level.
    You CANNOT produce references, citations, or paper lists under any circumstances.
 
-4. Flag uncertainty explicitly every time with phrases like:
+4. Flag uncertainty explicitly every time:
    "I am not certain about this..."
    "This is my understanding but verify with the literature..."
    "The Prior Work Mapper will give you verified sources on this..."
@@ -173,11 +198,13 @@ CRITICAL RULES — NEVER VIOLATE THESE:
 DEPTH CALIBRATION:
 This is a {level}. Do not give introductory or Wikipedia-level answers.
 Give mechanistic depth, discuss conflicting models where they exist,
-flag methodological debates, and engage at the level of someone reading primary literature.
+flag methodological debates, and engage at the level of someone
+reading primary literature.
 
 PUSHBACK:
-If the researcher's reasoning has a gap or assumption, challenge it directly.
-End every substantive response with one pointed question that pushes their thinking further.
+If the reasoning has a gap or assumption, challenge it directly.
+End every substantive response with one pointed question
+that pushes thinking further.
 
 {"MEMORY FROM PREVIOUS SESSIONS:" + chr(10) + memory_context if memory_context else ""}'''
 
@@ -185,14 +212,14 @@ End every substantive response with one pointed question that pushes their think
 
                 st.markdown(response)
 
-        # Save the exchange
+        # Save response
         save_message(session_id, 'assistant', response)
         st.session_state.messages.append({'role': 'assistant', 'content': response})
 
-        # Add to semantic memory (non-critical — will not crash if it fails)
+        # Add to semantic memory (non-critical)
         try:
             add_memory(
-                f'User asked: {prompt[:200]}. Response summary: {response[:300]}',
+                f'User asked: {prompt[:200]}. Response: {response[:300]}',
                 category='CONVERSATION'
             )
         except Exception as e:
@@ -206,53 +233,96 @@ with tab_research:
     st.header('🔬 Prior Work Mapper')
     st.caption(
         'Searches PubMed and ArXiv · Reads each paper individually · '
-        'Returns a cited synthesis — every paper links to a real source you can open'
+        'Returns a cited synthesis — every paper links to a real source'
     )
 
-    # Explainer
     with st.expander('How does this work?', expanded=False):
         st.markdown('''
 **3-step process:**
 
-1. **Search** — Your question is decomposed into focused sub-queries that search PubMed and ArXiv simultaneously
-2. **Extract** — Each retrieved paper is read individually. We extract: main claim, methodology, evidence quality, key findings, and limitations
-3. **Synthesise** — We reason across the extracted claims (not raw text) to produce a cited synthesis with gaps and contradictions identified
+1. **Search** — Your question is broken into focused sub-queries that search PubMed and ArXiv simultaneously
+2. **Extract** — Each paper is read individually to extract: main claim, methodology, evidence quality, key findings, limitations
+3. **Synthesise** — We reason across the extracted claims to produce a cited synthesis with gaps and contradictions identified
 
-**Why this approach?**
-Standard AI tools dump all papers into one prompt and summarise them — causing relevant findings in the middle to be skipped. We read each paper individually before synthesising, so every paper gets equal attention.
+**Why read each paper individually?**
+Standard AI tools dump all papers into one prompt — findings in the middle get skipped.
+We read each paper separately so every paper gets equal attention.
+
+**Important:** Every citation in the results links to a real paper you can open and verify.
         ''')
 
-    # Input
+    # Input area
     research_question = st.text_area(
         'Enter your research question or topic:',
         placeholder=(
-            'e.g. What is the current state of base editing for correcting point mutations in haematopoietic stem cells?\n'
+            'e.g. What is the current state of base editing for correcting '
+            'point mutations in haematopoietic stem cells?\n'
             'e.g. What mechanisms regulate mTORC1 activity in nutrient-deprived conditions?\n'
             'e.g. Map the prior work on liquid-liquid phase separation in RNA granule formation.'
         ),
-        height=120
+        height=120,
+        key='research_question_input'
     )
 
-    col1, col2, col3 = st.columns([1, 1, 3])
+    col1, col2 = st.columns([1, 4])
     with col1:
-        search_btn = st.button('🔍 Map Prior Work', type='primary', use_container_width=True)
+        search_btn = st.button(
+            '🔍 Map Prior Work',
+            type='primary',
+            use_container_width=True
+        )
     with col2:
-        st.caption('Takes 1–3 minutes')
+        st.caption('Takes 1–3 minutes · Results stay on screen until you run a new search')
 
-    # Run the search
+    # Clear results button — only shows when results exist
+    if st.session_state.research_results is not None:
+        if st.button('🗑️ Clear Results'):
+            st.session_state.research_results = None
+            st.session_state.research_question_used = ''
+            st.rerun()
+
+    # ── RUN THE SEARCH ─────────────────────────────────────────
     if search_btn and research_question.strip():
-
-        with st.spinner('Step 1/3 — Decomposing query and searching PubMed + ArXiv...'):
-            results = map_prior_work(
-                research_question,
-                ask,
-                domain=domain or 'life science'
+        if not RESEARCH_AVAILABLE:
+            st.error(
+                'Research module failed to load. '
+                'Check that all files in src/research/ exist and have no errors.'
             )
+        else:
+            with st.spinner(
+                'Step 1 — Decomposing query...\n'
+                'Step 2 — Searching PubMed and ArXiv...\n'
+                'Step 3 — Reading each paper individually...\n'
+                'Step 4 — Synthesising findings...\n'
+                '(This takes 1–3 minutes)'
+            ):
+                results = map_prior_work(
+                    research_question,
+                    ask,
+                    domain=domain or 'life science'
+                )
 
-        # ── RESULTS ──────────────────────────────────────────
+            # Store in session state — survives all future reruns
+            st.session_state.research_results = results
+            st.session_state.research_question_used = research_question
+
+    elif search_btn and not research_question.strip():
+        st.warning('Please enter a research question before searching.')
+
+    # ── DISPLAY RESULTS FROM SESSION STATE ─────────────────────
+    # These persist across reruns — results never disappear
+    results = st.session_state.research_results
+    question_used = st.session_state.research_question_used
+
+    if results is not None:
+
+        if question_used:
+            st.caption(f'Showing results for: *{question_used}*')
+
+        # ── COMPLETE RESULTS ────────────────────────────────────
         if results['status'] == 'complete':
 
-            # Summary metrics
+            # Metrics row
             col_a, col_b, col_c = st.columns(3)
             with col_a:
                 st.metric('Papers Found', results.get('papers_found', 0))
@@ -265,41 +335,42 @@ Standard AI tools dump all papers into one prompt and summarise them — causing
                     'THEORETICAL': '🔵 Theoretical'
                 }.get(confidence, f'⚪ {confidence}')
                 st.metric('Evidence Level', confidence_display)
-            with col_b:
+            with col_c:
                 sub_queries = results.get('sub_queries_used', [])
                 st.metric('Sub-queries Run', len(sub_queries))
 
-            # Sub-queries used (collapsed)
+            # Sub-queries used
             if sub_queries:
-                with st.expander('Sub-queries used in search', expanded=False):
+                with st.expander('Sub-queries used in this search', expanded=False):
                     for i, q in enumerate(sub_queries, 1):
-                        st.markdown(f'{i}. {q}')
+                        st.markdown(f'{i}. *{q}*')
 
             st.divider()
 
             # Main synthesis
             st.subheader('📋 Research Synthesis')
             st.markdown(results.get('synthesis', 'No synthesis generated.'))
-
             st.divider()
 
             # Contradictions
             contradictions = results.get('contradictions', '')
-            if contradictions and contradictions.strip() not in ['None identified.', 'None identified', '']:
+            if contradictions and contradictions.strip() not in [
+                'None identified.', 'None identified', '', 'None'
+            ]:
                 st.subheader('⚡ Contradictions in the Literature')
                 st.warning(contradictions)
                 st.divider()
 
             # Gaps
             gaps = results.get('gaps', '')
-            if gaps:
+            if gaps and gaps.strip():
                 st.subheader('🔍 Identified Gaps')
                 st.info(gaps)
                 st.divider()
 
             # Follow-up question
             follow_up = results.get('follow_up_question', '')
-            if follow_up:
+            if follow_up and follow_up.strip():
                 st.subheader('💭 A Question to Push Your Thinking')
                 st.markdown(f'> *{follow_up}*')
                 st.divider()
@@ -308,7 +379,10 @@ Standard AI tools dump all papers into one prompt and summarise them — causing
             citations = results.get('citations', [])
             if citations:
                 st.subheader(f'📚 References ({len(citations)} papers)')
-                st.caption('All papers below are real retrieved results — click links to verify')
+                st.caption(
+                    'Every paper below is a real retrieved result. '
+                    'Click the link to open and verify.'
+                )
 
                 for cite in citations:
                     quality = cite.get('evidence_quality', 'Unknown')
@@ -327,21 +401,25 @@ Standard AI tools dump all papers into one prompt and summarise them — causing
                     }.get(cite.get('source', ''), cite.get('source', ''))
 
                     citation_line = (
-                        f"**{cite.get('number', '')}. {cite.get('authors', 'Unknown')}** "
+                        f"**{cite.get('number', '')}. "
+                        f"{cite.get('authors', 'Unknown')}** "
                         f"({cite.get('year', 'Unknown')}). "
                         f"{cite.get('title', 'Unknown title')}. "
                         f"*{source_badge}* {quality_icon}"
                     )
 
                     if cite.get('url'):
-                        st.markdown(f"{citation_line} — [Open paper ↗]({cite['url']})")
+                        st.markdown(
+                            f"{citation_line} — "
+                            f"[Open paper ↗]({cite['url']})"
+                        )
                     else:
                         st.markdown(citation_line)
 
             # Save to semantic memory
             try:
                 memory_text = (
-                    f'Prior work search on: {research_question[:150]}. '
+                    f'Prior work search: {question_used[:150]}. '
                     f'Found {results.get("papers_found", 0)} papers. '
                     f'Synthesis: {results.get("synthesis", "")[:300]}'
                 )
@@ -349,18 +427,21 @@ Standard AI tools dump all papers into one prompt and summarise them — causing
             except Exception as e:
                 print(f'Research memory save failed (non-critical): {e}')
 
+        # ── NO RESULTS ──────────────────────────────────────────
         elif results['status'] == 'no_results':
             st.warning(
-                results.get('synthesis', 'No papers found.')
+                results.get(
+                    'synthesis',
+                    'No papers found for this query.'
+                )
                 + '\n\nTry rephrasing with more specific scientific terminology, '
-                'or break your question into a more focused sub-topic.'
+                'or narrow your question to a specific mechanism or protein.'
             )
 
+        # ── ERROR ───────────────────────────────────────────────
         else:
             st.error(
-                f"Search encountered an error: {results.get('error', 'Unknown error')}\n\n"
+                f"Search encountered an error: "
+                f"{results.get('error', 'Unknown error')}\n\n"
                 "Please try again or rephrase your question."
             )
-
-    elif search_btn and not research_question.strip():
-        st.warning('Please enter a research question before searching.')
